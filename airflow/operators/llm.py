@@ -22,11 +22,13 @@ from typing import TYPE_CHECKING
 
 from airflow.models.baseoperator import BaseOperator
 
+from openai import OpenAI
+
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class LlmOperator(BaseOperator):
+class LLMOperator(BaseOperator):
     r"""
     Operator to call LLM
     """
@@ -36,8 +38,26 @@ class LlmOperator(BaseOperator):
         self.prompt = prompt
         super().__init__(**kwargs)
 
-    def execute(self, context:Context):
+    def get_api_key(self) -> str:
+        raise NotImplementedError
+
+    def build_request(self) -> str:
+        raise NotImplementedError
+
+    def execute(self, context: Context):
         raise NotImplementedError
 
 
+class MockLLMOperator(LLMOperator):
+    def execute(self, context: Context):
+        pass
+
+
+class QWenLLMOperator(LLMOperator):
+    # 填写DashScope SDK的base_url
+    base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def __init__(self, prompt: str, **kwargs):
+        super().__init__(prompt, **kwargs)
+        self.client = OpenAI(api_key=self.get_api_key(), base_url=self.base_url)
 

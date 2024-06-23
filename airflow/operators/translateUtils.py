@@ -17,6 +17,13 @@
 # under the License.
 from __future__ import annotations
 
+import hashlib
+import json
+import time
+import uuid
+
+import requests
+
 from airflow.exceptions import AirflowException
 
 
@@ -64,14 +71,16 @@ class TranslateUnit:
 
 class TranslateEngineFactory:
     @staticmethod
-    def get_translate_engine(kind: str, source_language: str = "English",
+    def get_translate_engine(kind: str = 'youdao', source_language: str = "English",
                              target_language: str = "Chinese") -> TranslateEngine:
+        if kind == 'youdao':
+            return YouDaoTranslateEngine(source_language, target_language)
         if kind == "google":
             return GoogleTranslateEngine(source_language, target_language)
-        elif kind == "deepl":
+        if kind == "deepl":
             return DeepLTranslateEngine(source_language, target_language)
-        else:
-            raise ValueError(f"Translate engine kind {kind} not supported")
+
+        raise ValueError(f"Translate engine kind {kind} not supported")
 
 
 class TranslateEngine:
@@ -88,6 +97,12 @@ class TranslateEngine:
         self.target_language = target_language
 
     def translate(self, source: str, **kwargs) -> str:
+        raise NotImplementedError
+
+    def get_api_key(self) -> str:
+        raise NotImplementedError
+
+    def get_api_secret(self) -> str:
         raise NotImplementedError
 
 
@@ -109,3 +124,73 @@ class DeepLTranslateEngine(TranslateEngine):
     # TODO: use DeepL translate API:
     def translate(self, source: str, **kwargs) -> str:
         raise NotImplementedError
+
+
+def truncate(q: str):
+    if q is None:
+        return None
+    size = len(q)
+    return q if size <= 20 else q[0:10] + str(size) + q[size - 10:size]
+
+
+def encrypt(sign_str: str):
+    hash_algorithm = hashlib.sha256()
+    hash_algorithm.update(sign_str.encode('utf-8'))
+    return hash_algorithm.hexdigest()
+
+
+class YouDaoTranslateEngine(TranslateEngine):
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    youdao_url = "https://openapi.youdao.com/api"
+    app_key = "26d53e2a45215902"
+    app_secret = "sIoaQsfUo4nFxVmnWMIEZq0rCkqMX8J6"
+
+    def __init__(self, source_language: str, target_language: str):
+        super().__init__(source_language, target_language)
+        self.translate_kind = "youdao"
+
+    def get_api_key(self) -> str:
+        return YouDaoTranslateEngine.app_key
+
+    def get_api_secret(self) -> str:
+        return YouDaoTranslateEngine.app_secret
+
+    def translate(self, source: str, **kwargs) -> str:
+        api_key = self.get_api_key()
+        api_secret = self.get_api_secret()
+
+        data = dict()
+        data['from'] = self.source_language
+        data['to'] = self.target_language
+        data['q'] = source
+        data['appKey'] = api_key
+
+        cur_time = str(int(time.time()))
+        data['curtime'] = cur_time
+
+        # sign and encrypt data
+        data['signType'] = 'v3'
+        salt = str(uuid.uuid1())
+        sign_str = (api_key + truncate(source) + salt + cur_time + api_secret)
+        sign = encrypt(sign_str)
+        data['salt'] = salt
+        data['sign'] = sign
+
+        try_count = 0
+        while try_count < 5:
+            try_count += 1
+            try:
+                response = requests.post(YouDaoTranslateEngine.youdao_url, data=data,
+                                         headers=YouDaoTranslateEngine.headers)
+                if response.status_code != 200:
+                    continue
+                content_type = response.headers['Content-Type']
+                if content_type is None or content_type == 'audio/mp3':
+                    continue
+                json_data = json.loads(response.text)
+                if (json_data['errorCode'] != '0' or json_data['translation'] is None or
+                    not isinstance(json_data['translation'], list)):
+                    continue
+                return "".join(json_data['translation'])
+            except Exception:
+                continue
