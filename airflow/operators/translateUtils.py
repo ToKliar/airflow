@@ -27,46 +27,28 @@ import requests
 from airflow.exceptions import AirflowException
 
 
+class Paragraph:
+    def __init__(self, doc_id: int, content: str, para_id: int, r_para_id: int):
+        self.doc_id = doc_id
+        self.content = content
+        self.para_id = para_id
+        self.r_para_id = r_para_id
+
+
+class Sentence:
+    def __init__(self, content: str, sent_id: int, para_id: int, r_sent_id: int):
+        self.content = content
+        self.sent_id = sent_id
+        self.para_id = para_id
+        self.r_sent_id = r_sent_id
+
+
 class TranslateUnit:
-    def __init__(self, doc_ids: list[int], para_ids: list[int], sent_ids: list[int], text: str,
-                 empty: bool = False):
+    def __init__(self, para_ids: list[int], sent_ids: list[int], text: str):
         self.idx = None
-        self.doc_ids = doc_ids
         self.para_ids = para_ids
         self.sent_ids = sent_ids
         self.text = text
-        self.empty = empty
-
-    def skip(self) -> bool:
-        return self.empty or (len(self.sent_ids) == 1 and self.sent_ids[0] == TranslateUnit.EMPTY_SENT_ID)
-
-    def serialize(self, idx: int) -> str:
-        self.idx = idx
-        out_str = "\t".join(
-            [str(self.idx), str(self.doc_ids), str(self.para_ids), str(self.sent_ids), self.text,
-             str(self.empty)])
-        return out_str
-
-    @staticmethod
-    def deserialize(data: str) -> TranslateUnit:
-        parts = data.split("\t")
-        if len(parts) <= 5:
-            raise AirflowException("Translate Unit is not valid")
-        try:
-            idx = int(parts[0])
-            doc_ids = [int(idx) for idx in list(parts[1])]
-            para_ids = [int(idx) for idx in list(parts[2])]
-            sent_ids = [int(idx) for idx in list(parts[3])]
-            text = parts[4]
-            empty = bool(parts[5])
-            tu = TranslateUnit(doc_ids, para_ids, sent_ids, text, empty)
-            tu.idx = idx
-            return tu
-        except Exception as e:
-            raise AirflowException("Translate Unit is not valid due to {} when deserialize {}"
-                                   .format(repr(e), data))
-
-    EMPTY_SENT_ID = -1
 
 
 class TranslateEngineFactory:

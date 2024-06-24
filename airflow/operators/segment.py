@@ -18,11 +18,13 @@
 # fmt: off
 from __future__ import annotations
 
+import json
 import os.path
-from typing import TYPE_CHECKING
+import uuid
+from typing import TYPE_CHECKING, Any
 
 from airflow.models.baseoperator import BaseOperator
-from airflow.operators.translateUtils import TranslateUnit
+from airflow.operators.translateUtils import TranslateUnit, Paragraph, Sentence
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
@@ -33,28 +35,68 @@ class SegmentOperator(BaseOperator):
     Base class for all segment operators.
     """
 
-    def __init__(self, *, docs: list[str], file_path: str, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.docs = docs
-        self.file_path = file_path
-        self.xcom_key = "file_folder"
+        self.docs: list[str] = []
+        self.params: list[Paragraph] = []
+        self.sentences: list[Sentence] = []
 
-    def execute(self, context: Context) -> list[TranslateUnit]:
+        self.folder_path = './seg_folder_' + str(uuid.uuid4())
+        self.src_folder_path = './src_folder'
+        self.docs_path = './docs.txt'
+        self.paras_path = './paras.txt'
+        self.sentences_path = './sentences.txt'
+        self.tu_path = './tu.txt'
+        self.xcom_key = "segment"
+
+    def pre_segment(self):
+        from nltk.tokenize import sent_tokenize
+
+        with open("./source_file.txt", "r", encoding="utf-8") as f:
+            self.docs = ["".join(f.readlines())]
+        para_id = 0
+        sent_id = 0
+        for doc_id, doc in enumerate(self.docs):
+            params = doc.split("\n")
+            for r_para_id, param in enumerate(params):
+                self.params.append(Paragraph(doc_id, param, para_id, r_para_id))
+                para_id += 1
+                sentences = sent_tokenize(param)
+                for r_sent_id, sentence in enumerate(sentences):
+                    self.sentences.append(Sentence(sentence, sent_id, para_id, r_sent_id))
+                    sent_id += 1
+
+    def execute(self, context: Context):
         """
         segment raw text to translate units
         """
-        raise NotImplementedError
+        if not os.path.exists(self.src_folder_path):
+            os.makedirs(self.src_folder_path)
+            self.log.info("create folder {} to store source text parts".format(self.src_folder_path))
+        self.pre_segment()
+        self.storage()
+
+    def storage(self):
+        with open(os.path.join(self.src_folder_path, self.docs_path), "w", encoding="utf-8") as f:
+            json.dump(self.docs, f, default=lambda o: o.__dict__, indent=4)
+            f.close()
+
+        with open(os.path.join(self.src_folder_path, self.paras_path), "w", encoding="utf-8") as f:
+            json.dump(self.params, f, default=lambda o: o.__dict__, indent=4)
+            f.close()
+
+        with open(os.path.join(self.src_folder_path, self.sentences_path), "w", encoding="utf-8") as f:
+            json.dump(self.sentences, f, default=lambda o: o.__dict__, indent=4)
+            f.close()
 
     def serialize(self, data: list[TranslateUnit], context: Context) -> None:
-        folder = os.path.exists(self.file_path)
-        if not folder:
-            os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-            self.log.info("create folder {} to store translated units".format(self.file_path))
+        if not os.path.exists(self.folder_path):
+            os.makedirs(self.folder_path)
+            self.log.info("create folder {} to store translated units".format(self.folder_path))
 
-        for tu_id, tu in enumerate(data):
-            with open(os.path.join(self.file_path, str(tu_id) + '.txt'), 'w') as f:
-                f.write(tu.serialize(tu_id))
-        self.xcom_push(context, self.xcom_key, self.file_path)
+        with open(os.path.join(self.folder_path, self.tu_path), 'w') as f:
+            json.dump(data, f, default=lambda o: o.__dict__, indent=4)
+        self.xcom_push(context, self.xcom_key, os.path.join(self.folder_path, self.tu_path))
 
 
 class SentenceSegmentOperator(SegmentOperator):
@@ -62,14 +104,9 @@ class SentenceSegmentOperator(SegmentOperator):
         super().__init__(**kwargs)
 
     def execute(self, context: Context) -> None:
-        from nltk.tokenize import sent_tokenize
+        super().execute(context)
         output: list[TranslateUnit] = []
-        for doc_idx, doc in enumerate(self.docs):
-            params = doc.split("\n")
-            for para_idx, param in enumerate(params):
-                sentences = sent_tokenize(param)
-                if len(sentences) == 0:
-                    output.append(TranslateUnit([doc_idx], [para_idx], [TranslateUnit.EMPTY_SENT_ID], ""))
-                for sent_idx, sent in enumerate(sentences):
-                    output.append(TranslateUnit([doc_idx], [para_idx], [sent_idx], sent, len(sent) == 0))
+        for sentence in self.sentences:
+            output.append(TranslateUnit([sentence.para_id], [sentence.sent_id], sentence.content))
+
         self.serialize(output, context)

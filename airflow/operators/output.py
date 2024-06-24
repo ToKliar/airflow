@@ -18,24 +18,21 @@
 # fmt: off
 from __future__ import annotations
 
+import os
 from enum import Enum
 from typing import Sequence, TYPE_CHECKING
 
 from airflow.exceptions import AirflowException
 from airflow.models.baseoperator import BaseOperator
-from airflow.utils.types import ArgNotSet
+from airflow.operators.input import InputFileType
+from airflow.operators.translateUtils import TranslateUnit
+from airflow.settings import json
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class InputFileType(Enum):
-    TXT = 1
-    PDF = 2
-    EPUB = 3
-
-
-class InputBaseOperator(BaseOperator):
+class OutputOperator(BaseOperator):
     r"""
     Base class for all input operators.
 
@@ -45,38 +42,32 @@ class InputBaseOperator(BaseOperator):
     template_fields: Sequence[str] = ("file_path", "file_type")
     ui_color = "#e71b64"
 
-    def __init__(self, file_path: str | ArgNotSet, file_type: InputFileType = InputFileType.TXT, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.file_path = file_path
-        self.file_type = file_type
+        self.file_path: str = ""
+        self.file_type: InputFileType = InputFileType.TXT
 
-    def extract_content(self) -> str:
+    def add_format(self):
         raise NotImplementedError
-
-    def store_format(self):
-        raise NotImplementedError
-
-    def get_text_path(self) -> str:
-        return "./source_file.txt"
 
     def execute(self, context: Context):
-        """
-        get raw text from input file path or folder path
-        """
-        raw_source = self.extract_content()
-        raw_path = self.get_text_path()
-        with open(raw_path, "w", encoding="utf-8") as f:
-            f.write(raw_source)
+        upstream_tasks = self.get_direct_relatives(True)
 
-        self.xcom_push(context, "source_path", raw_path)
-        self.xcom_push(context, "file_type", self.file_type)
+        first = False
+        for upstream_task in upstream_tasks:
+            if first:
+                raise AirflowException("more than one upstream tasks")
+            first = True
+            src_path = self.xcom_pull(context, upstream_task.task_id, upstream_task.dag_id, "translate")
+
+            if not os.path.exists(src_path) or not os.path.isfile(src_path):
+                raise AirflowException("upstream task folder does not exist")
+
+            output = self.merge(src_path)
+            print(output)
+
+    def merge(self, src_path: str) -> str:
+        pass
 
 
-class InputTxtOperator(InputBaseOperator):
-    def __init__(self, *, file_path: str, file_type: InputFileType = InputFileType.TXT, **kwargs) -> None:
-        super().__init__(file_path, file_type, **kwargs)
 
-    def extract_content(self) -> str:
-        with open(self.file_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            return "\n".join(lines)

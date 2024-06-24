@@ -18,7 +18,9 @@
 # fmt: off
 from __future__ import annotations
 
+import json
 import os.path
+import uuid
 from typing import TYPE_CHECKING, Sequence
 
 from airflow.exceptions import AirflowException
@@ -48,18 +50,18 @@ class TranslateOperator(BaseOperator):
         super().__init__(**kwargs)
         self.translate_engine = TranslateEngineFactory.get_translate_engine(translate_engine_type, src_lang,
                                                                             tgt_lang)
-        self.file_path = ""
-        self.xcom_key = "file_folder"
+        self.folder_path = "./translate"
+        self.output_path = "output_{}.txt".format(uuid.uuid4())
+        self.xcom_key = "translate"
 
     def serialize(self, data: list[TranslateUnit], context: Context) -> None:
-        if not os.path.exists(self.file_path):
-            os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-            self.log.info("create folder {} to store translated units".format(self.file_path))
+        if not os.path.exists(self.folder_path):
+            os.makedirs(self.folder_path)
+            self.log.info("create folder {} to store translate outcome".format(self.folder_path))
 
-        for tu_id, tu in enumerate(data):
-            with open(os.path.join(self.file_path, str(tu_id) + '.txt'), 'w') as f:
-                f.write(tu.serialize(tu_id))
-        self.xcom_push(context, self.xcom_key, self.file_path)
+        with open(os.path.join(self.folder_path, self.output_path), 'w') as f:
+            json.dump(data, f, default=lambda o: o.__dict__, indent=4)
+        self.xcom_push(context, self.xcom_key, os.path.join(self.folder_path, self.output_path))
 
     def execute(self, context: Context) -> None:
         if self.translate_engine is None:
@@ -74,20 +76,17 @@ class TranslateOperator(BaseOperator):
             first = True
             if not isinstance(upstream_task, SegmentOperator):
                 raise AirflowException("upstream task must be SegmentOperator")
-            folder = self.xcom_pull(context, upstream_task.task_id, upstream_task.dag_id,
-                                    upstream_task.xcom_key)
+            tu_path = self.xcom_pull(context, upstream_task.task_id, upstream_task.dag_id,
+                                     upstream_task.xcom_key)
 
-            if not os.path.exists(folder) or not os.path.isdir(folder):
+            if not os.path.exists(tu_path) or not os.path.isfile(tu_path):
                 raise AirflowException("upstream task folder does not exist")
 
             output_tus: list[TranslateUnit] = []
-            for file in os.listdir(folder):
-                file_path = os.path.join(folder, file)
-                with open(file_path, "r") as f:
-                    input_data = f.readlines()
-                    for input_line in input_data:
-                        input_tu = TranslateUnit.deserialize(input_line)
-                        if not input_tu.skip():
-                            input_tu.text = self.translate_engine.translate(input_tu.text)
-                        output_tus.append(input_tu)
+            with open(tu_path, "r") as f:
+                input_data = json.load(f)
+                for input_d in input_data:
+                    input_tu = TranslateUnit(**input_d)
+                    input_tu.text = self.translate_engine.translate(input_tu.text)
+                    output_tus.append(input_tu)
             self.serialize(output_tus, context)
