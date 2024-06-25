@@ -20,8 +20,7 @@ from __future__ import annotations
 
 import json
 import os.path
-import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from airflow.models.baseoperator import BaseOperator
 from airflow.operators.translateUtils import TranslateUnit, Paragraph, Sentence
@@ -41,7 +40,7 @@ class SegmentOperator(BaseOperator):
         self.params: list[Paragraph] = []
         self.sentences: list[Sentence] = []
 
-        self.folder_path = './seg_folder_' + str(uuid.uuid4())
+        self.folder_path = './seg_folder_' + self.task_id
         self.src_folder_path = './src_folder'
         self.docs_path = './docs.txt'
         self.paras_path = './paras.txt'

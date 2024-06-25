@@ -18,6 +18,7 @@
 # fmt: off
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from airflow.models.baseoperator import BaseOperator
@@ -28,36 +29,36 @@ if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class LLMOperator(BaseOperator):
+class LLMKind(Enum):
+    Mock = 0
+    OpenAI = 1
+    QWen = 2
+    Local = 3
+
+
+class LLMEngine:
     r"""
     Operator to call LLM
     """
 
     # TODO: first mock the output, second call Qwen
-    def __init__(self, prompt: str, **kwargs):
-        self.prompt = prompt
-        super().__init__(**kwargs)
 
     def get_api_key(self) -> str:
         raise NotImplementedError
 
-    def build_request(self) -> str:
+    def build_request(self, message: list[str]) -> str:
         raise NotImplementedError
 
-    def execute(self, context: Context):
+    def get_response(self, message: list[str]) -> str:
         raise NotImplementedError
 
 
-class MockLLMOperator(LLMOperator):
-    def execute(self, context: Context):
-        pass
-
-
-class QWenLLMOperator(LLMOperator):
+class QWenLLMEngine(LLMEngine):
     # 填写DashScope SDK的base_url
     base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    def __init__(self, prompt: str, **kwargs):
-        super().__init__(prompt, **kwargs)
-        self.client = OpenAI(api_key=self.get_api_key(), base_url=self.base_url)
 
+def get_llm_engine(kind: LLMKind) -> LLMEngine:
+    if kind == LLMKind.Mock:
+        return LLMEngine()
+    raise NotImplementedError

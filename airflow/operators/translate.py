@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import json
 import os.path
-import uuid
 from typing import TYPE_CHECKING, Sequence
 
 from airflow.exceptions import AirflowException
 from airflow.models.baseoperator import BaseOperator
+from airflow.operators.llm import LLMKind, get_llm_engine
 from airflow.operators.segment import SegmentOperator
 from airflow.operators.translateUtils import TranslateEngineFactory, TranslateUnit
 
@@ -42,16 +42,16 @@ class TranslateOperator(BaseOperator):
     def __init__(
         self,
         *,
-        translate_engine_type: str,
         src_lang: str,
         tgt_lang: str,
         **kwargs
     ) -> None:
         super().__init__(**kwargs)
-        self.translate_engine = TranslateEngineFactory.get_translate_engine(translate_engine_type, src_lang,
-                                                                            tgt_lang)
+
+        self.src_lang = src_lang
+        self.tgt_lang = tgt_lang
         self.folder_path = "./translate"
-        self.output_path = "output_{}.txt".format(uuid.uuid4())
+        self.output_path = "output_{}.txt".format(self.task_id)
         self.xcom_key = "translate"
 
     def serialize(self, data: list[TranslateUnit], context: Context) -> None:
@@ -63,10 +63,10 @@ class TranslateOperator(BaseOperator):
             json.dump(data, f, default=lambda o: o.__dict__, indent=4)
         self.xcom_push(context, self.xcom_key, os.path.join(self.folder_path, self.output_path))
 
-    def execute(self, context: Context) -> None:
-        if self.translate_engine is None:
-            raise AirflowException("Translate engine is empty")
+    def translate(self, src: str) -> str:
+        raise NotImplementedError
 
+    def execute(self, context: Context) -> None:
         upstream_tasks = self.get_direct_relatives(True)
 
         first = False
@@ -87,6 +87,40 @@ class TranslateOperator(BaseOperator):
                 input_data = json.load(f)
                 for input_d in input_data:
                     input_tu = TranslateUnit(**input_d)
-                    input_tu.text = self.translate_engine.translate(input_tu.text)
+                    input_tu.text = self.translate(input_tu.text)
                     output_tus.append(input_tu)
             self.serialize(output_tus, context)
+
+
+class MachineTranslateOperator(TranslateOperator):
+    def __init__(
+        self,
+        *,
+        translate_engine_type: str,
+        **kwargs
+    ) -> None:
+        super().__init__(**kwargs)
+        self.translate_engine = TranslateEngineFactory.get_translate_engine(translate_engine_type,
+                                                                            self.src_lang,
+                                                                            self.tgt_lang)
+
+    def translate(self, src: str) -> str:
+        if self.translate_engine is None:
+            raise AirflowException("Translate engine is empty")
+        return self.translate_engine.translate(src)
+
+
+class LLMTranslateOperator(TranslateOperator):
+    r"""
+    Operator to call LLM
+    """
+
+    def __init__(self, kind: LLMKind = LLMKind.Mock, **kwargs):
+        super().__init__(**kwargs)
+        self.llm_engine = get_llm_engine(kind)
+        self.translate_engine = TranslateEngineFactory.get_translate_engine("youdao",
+                                                                            self.src_lang,
+                                                                            self.tgt_lang)
+
+    def translate(self, src: str) -> str:
+        return self.translate_engine.translate(src)
